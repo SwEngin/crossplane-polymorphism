@@ -1,0 +1,22 @@
+# Example: Create a CephObjectStore + ObjectBucketClaim
+#
+# Note: Ceph namespace controlled by platform team via ConfigMap.
+# Developers focus on functional requirements only.
+#
+# Prerequisites:
+#   - Platform ConfigMap 'platform-config' deployed (see platform-config.yaml)
+#   - Rook operator and CephCluster managed by the platform team (apply bootstrap/rook-ceph.yaml once)
+#   - Kubernetes ProviderConfig "kubernetes-provider" configured
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: team-data-ceph-existing
+  namespace: team-b
+spec:
+  crossplane:
+    compositionRef:
+      name: objectstorage-ceph
+
+  class: standard
+  versioning: false
+  retentionDays: 30

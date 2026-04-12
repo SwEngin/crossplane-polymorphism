@@ -1,0 +1,79 @@
+# Demo: Verify Azure ObjectStorage end-to-end
+#
+# Prerequisite: xobjectstorage-azure.yaml applied and XR is Ready.
+#
+# This Job:
+#   1. Reads AWS credentials + endpoint from the composition-created secret
+#   2. Uploads a test object via the S3Proxy
+#   3. Downloads it back and verifies the content
+#   4. Deletes the test object
+#
+# Run:
+#   kubectl apply -f examples/xobjectstorage-azure.yaml
+#   kubectl wait xobjectstorage/team-data-azure --for=condition=Ready --timeout=5m
+#   kubectl apply -f examples/demo-app-azure.yaml
+#   kubectl logs -n team-a job/demo-azure-roundtrip --follow
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-azure-roundtrip
+  namespace: team-a
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: aws-cli
+          image: public.ecr.aws/aws-cli/aws-cli:2.24.19
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "=== Azure S3Proxy round-trip demo ==="
+              echo "Endpoint : $ENDPOINT"
+              echo "Bucket   : $BUCKET_NAME"
+              echo ""
+
+              echo "hello from crossplane demo" > /tmp/test.txt
+
+              echo "[1/3] Uploading test object..."
+              aws s3 cp /tmp/test.txt s3://${BUCKET_NAME}/demo/test.txt \
+                --endpoint-url "${ENDPOINT}"
+
+              echo "[2/3] Downloading and verifying..."
+              aws s3 cp s3://${BUCKET_NAME}/demo/test.txt /tmp/downloaded.txt \
+                --endpoint-url "${ENDPOINT}"
+              diff /tmp/test.txt /tmp/downloaded.txt
+
+              echo "[3/3] Cleaning up..."
+              aws s3 rm s3://${BUCKET_NAME}/demo/test.txt \
+                --endpoint-url "${ENDPOINT}"
+
+              echo ""
+              echo "SUCCESS — Azure ObjectStorage is working end-to-end"
+          env:
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: objectstorage-creds-team-data-azure
+                  key: endpoint
+            - name: BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: objectstorage-creds-team-data-azure
+                  key: bucket-name
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: objectstorage-creds-team-data-azure
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: objectstorage-creds-team-data-azure
+                  key: AWS_SECRET_ACCESS_KEY

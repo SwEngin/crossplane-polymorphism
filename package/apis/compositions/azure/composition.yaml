@@ -1,0 +1,299 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: objectstorage-azure
+  labels:
+    provider: azure
+spec:
+  compositeTypeRef:
+    apiVersion: swengin.io/v1alpha1
+    kind: XObjectStorage
+  mode: Pipeline
+  pipeline:
+    # ------------------------------------------------------------------
+    # Step 1: Helpers — compute derived values once, share via context.
+    # Downstream steps read {{ index .context "swengin.io/helpers" }}.
+    # ------------------------------------------------------------------
+    - step: helpers
+      functionRef:
+        name: swengin-function-objectstorage-helpers
+
+    # ------------------------------------------------------------------
+    # Step 2: Environment Validation — fail fast if Azure ClusterProviderConfig
+    # is missing. Using fail stops all downstream steps immediately.
+    # ------------------------------------------------------------------
+    - step: environment-validation
+      functionRef:
+        name: upbound-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $h := index .context "swengin.io/helpers" }}
+            {{- if not $h.azureProviderExists }}
+            {{- fail "Azure ClusterProviderConfig 'azure-provider' not found. Please contact your platform team to configure Azure credentials for azure.m.upbound.io resources." }}
+            {{- end }}
+
+    # ------------------------------------------------------------------
+    # Step 3: Storage Account + Blob Container — XR spec now has platform values
+    # ------------------------------------------------------------------
+    - step: storage-account-and-container
+      functionRef:
+        name: upbound-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec :=  $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace | default "default" }}
+            {{- $h := index .context "swengin.io/helpers" }}
+            
+            {{- $azure := $spec.azure | default dict }}
+            {{- $region := $azure.region | default "germanywestcentral" }}
+            {{- $resourceGroup := $azure.resourceGroupName | default (printf "rg-%s" $name) }}
+            {{- $createRG := $azure.createResourceGroup | default true }}
+            
+            {{- $class := $spec.class | default "standard" }}
+            {{- $versioning := $spec.versioning | default false }}
+            {{- $retentionDays := $spec.retentionDays | default 7 }}
+            {{- $accessMode := $azure.accessMode | default "private" }}
+            {{- $saExtName := $h.saExtName }}
+            ---
+            {{- if $createRG }}
+            apiVersion: azure.m.upbound.io/v1beta1
+            kind: ResourceGroup
+            metadata:
+              name: {{ $resourceGroup }}
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: resource-group
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: azure-provider
+              forProvider:
+                location: {{ $region }}
+            {{- end }}
+            ---
+            # Azure Storage Account
+            apiVersion: storage.azure.m.upbound.io/v1beta1
+            kind: Account
+            metadata:
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: storage-account
+                crossplane.io/external-name: {{ $saExtName }}
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: azure-provider
+              writeConnectionSecretToRef:
+                name: sa-creds-{{ $name }}
+              forProvider:
+                accountReplicationType: LRS
+                accountTier: {{ if eq $class "premium" }}Premium{{ else }}Standard{{ end }}
+                location: {{ $region }}
+                resourceGroupName: {{ $resourceGroup }}
+                accessTier: Hot
+                httpsTrafficOnlyEnabled: true
+                allowNestedItemsToBePublic: false
+                blobProperties:
+                  versioningEnabled: {{ $versioning }}
+                  deleteRetentionPolicy:
+                    days: {{ $retentionDays }}
+            ---
+            # Azure Blob Container
+            apiVersion: storage.azure.m.upbound.io/v1beta1
+            kind: Container
+            metadata:
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: blob-container
+                crossplane.io/external-name: {{ $name }}
+            spec:
+              providerConfigRef:
+                kind: ClusterProviderConfig
+                name: azure-provider
+              forProvider:
+                storageAccountNameSelector:
+                  matchControllerRef: true
+                containerAccessType: {{ if eq $accessMode "public-read" }}blob{{ else }}private{{ end }}
+
+    # ------------------------------------------------------------------
+    # Step 4: S3Proxy — deploy once the Storage Account is Ready.
+    # Gated on storage-account Ready=True so the proxy has credentials.
+    # ------------------------------------------------------------------
+    - step: s3proxy
+      functionRef:
+        name: upbound-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec := $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace | default "default" }}
+            {{- $h := index .context "swengin.io/helpers" }}
+            {{- $s3Proxy := $h.s3ProxyEnabled }}
+            {{- $saExtName := $h.saExtName }}
+            {{- $saReady := $h.isSAReady }}
+            {{- $blobEndpoint := $h.primaryBlobEndpoint }}
+
+            {{- if and $s3Proxy $saReady }}
+            ---
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: s3proxy-deployment
+              name: s3proxy-{{ $name }}
+              namespace: {{ $ns }}
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: s3proxy
+                  instance: {{ $name }}
+              template:
+                metadata:
+                  labels:
+                    app: s3proxy
+                    instance: {{ $name }}
+                spec:
+                  containers:
+                    - name: s3proxy
+                      image: andrewgaul/s3proxy:sha-03a1cd4
+                      ports:
+                        - containerPort: 80
+                      env:
+                        - name: S3PROXY_ENDPOINT
+                          value: "http://0.0.0.0:80"
+                        - name: JCLOUDS_PROVIDER
+                          value: "azureblob-sdk"
+                        - name: JCLOUDS_IDENTITY
+                          value: {{ $saExtName }}
+                        - name: JCLOUDS_CREDENTIAL
+                          valueFrom:
+                            secretKeyRef:
+                              name: sa-creds-{{ $name }}
+                              key: attribute.primary_access_key
+                        - name: JCLOUDS_ENDPOINT
+                          value: {{ $blobEndpoint }}
+                        - name: S3PROXY_IDENTITY
+                          value: "s3proxy-access-key"
+                        - name: S3PROXY_CREDENTIAL
+                          value: "s3proxy-{{ $name }}-secret"
+                        - name: S3PROXY_AUTHORIZATION
+                          value: "aws-v2-or-v4"
+                      resources:
+                        requests:
+                          memory: "128Mi"
+                          cpu: "100m"
+                        limits:
+                          memory: "256Mi"
+                          cpu: "250m"
+                      readinessProbe:
+                        tcpSocket:
+                          port: 80
+                        initialDelaySeconds: 30
+                        periodSeconds: 10
+                      livenessProbe:
+                        tcpSocket:
+                          port: 80
+                        initialDelaySeconds: 45
+                        periodSeconds: 20
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: s3proxy-service
+              name: s3proxy-{{ $name }}
+              namespace: {{ $ns }}
+            spec:
+              type: ClusterIP
+              ports:
+                - port: 80
+                  targetPort: 80
+                  protocol: TCP
+                  name: s3
+              selector:
+                app: s3proxy
+                instance: {{ $name }}
+            {{- end }}{{/* end s3Proxy+saReady */}}
+
+    # ------------------------------------------------------------------
+    # Step 5: Connection Secret + XR Status
+    # ------------------------------------------------------------------
+    - step: connection-secret-and-status
+      functionRef:
+        name: upbound-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec := $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace | default "default" }}
+            {{- $h := index .context "swengin.io/helpers" }}
+            {{- $s3Proxy := $h.s3ProxyEnabled }}
+            {{- $saReady := $h.isSAReady }}
+            {{- $saExtName := $h.saExtName }}
+            {{- $blobEndpoint := $h.primaryBlobEndpoint }}
+            {{- $credsSecretName := printf "objectstorage-creds-%s" $name }}
+            
+            {{- if $saReady }}
+            ---
+            # Connection Secret
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: connection-secret
+              name: {{ $credsSecretName }}
+              namespace: {{ $ns }}
+            type: Opaque
+            stringData:
+              endpoint: {{ if $s3Proxy }}http://s3proxy-{{ $name }}.{{ $ns }}.svc.cluster.local:80{{ else }}{{ $blobEndpoint }}{{ end }}
+              bucket-name: {{ $name }}
+              protocol: {{ if $s3Proxy }}s3{{ else }}azure-blob{{ end }}
+              AWS_ACCESS_KEY_ID: s3proxy-access-key
+              AWS_SECRET_ACCESS_KEY: s3proxy-{{ $name }}-secret
+            ---
+            # Composite Resource — set status fields
+            apiVersion: swengin.io/v1alpha1
+            kind: XObjectStorage
+            metadata:
+              name: {{ $name }}
+            status:
+              bucketName: {{ $name }}
+              credentialsSecretRef:
+                name: {{ $credsSecretName }}
+                namespace: {{ $ns }}
+            {{- if $s3Proxy }}
+              endpoint: http://s3proxy-{{ $name }}.{{ $ns }}.svc.cluster.local:80
+              protocol: s3
+            {{- else }}
+              protocol: azure-blob
+              endpoint: {{ $blobEndpoint }}
+            {{- end }}
+            {{- end }}{{/* end $saReady */}}
+
+    # ------------------------------------------------------------------
+    # Step 6: Readiness
+    # ------------------------------------------------------------------
+    - step: readiness
+      functionRef:
+        name: upbound-function-auto-ready

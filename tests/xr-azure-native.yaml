@@ -1,0 +1,18 @@
+# Test XR: Azure Blob Storage WITHOUT S3Proxy (native blob endpoint)
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: test-azure-native
+  namespace: team-a
+  uid: "test-uid-azure-002"
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: azure
+  class: premium
+  versioning: false
+  accessMode: public-read
+  azure:
+    region: westeurope
+    resourceGroupName: existing-rg
+    s3Proxy: false

@@ -1,0 +1,25 @@
+# Example: Create a new CephObjectStore + ObjectBucketClaim
+#
+# Note: Ceph namespace controlled by platform team via ConfigMap.
+# The composition ensures Rook operator + CephCluster are present (installing
+# them via Helm if needed) before provisioning:
+#   1. A CephObjectStore (new RGW pool on the Ceph cluster)
+#   2. A dedicated StorageClass pointing at the new RGW
+#   3. An ObjectBucketClaim — Rook creates bucket + credentials Secret
+#   4. Versioning Job (because versioning: true)
+#
+# Prerequisites:
+#   - Platform ConfigMap 'platform-config' deployed (see platform-config.yaml)
+#   - Kubernetes ProviderConfig "kubernetes-provider" configured
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: team-data-ceph-fresh
+  namespace: team-b
+spec:
+  crossplane:
+    compositionRef:
+      name: objectstorage-ceph
+
+  class: premium
+  versioning: true

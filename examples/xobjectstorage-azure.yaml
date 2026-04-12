@@ -1,0 +1,29 @@
+# Example: Provision Azure Blob Storage with S3-compatible proxy
+#
+# This claim selects the Azure composition and creates:
+#   1. An Azure Storage Account (Standard tier, LRS)  
+#   2. A Blob Container with private access
+#   3. An S3Proxy deployment translating S3 API → Azure Blob
+#
+# Consumers talk to the proxy using any S3 SDK.
+#
+# Note: Region and Resource Group controlled by platform team via ConfigMap.
+# Developers focus on functional requirements only.
+#
+# Prerequisites:
+#   - Platform ConfigMap 'platform-config' deployed (see platform-config.yaml)
+#   - Azure ProviderConfig "azure-provider" configured with valid credentials
+#   - Kubernetes ProviderConfig "kubernetes-provider" configured
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: team-data-azure
+  namespace: team-a
+spec:
+  crossplane:
+    compositionRef:
+      name: objectstorage-azure
+
+  class: standard
+  versioning: true
+  retentionDays: 30

@@ -1,0 +1,19 @@
+# Test XR: Azure with new Resource Group creation
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: test-azure-newrg
+  namespace: team-a
+  uid: "test-uid-azure-003"
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: azure
+  class: standard
+  versioning: true
+  retentionDays: 14
+  accessMode: private
+  azure:
+    region: canadacentral
+    createResourceGroup: true
+    s3Proxy: true

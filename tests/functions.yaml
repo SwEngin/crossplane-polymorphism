@@ -1,0 +1,20 @@
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: upbound-function-go-templating
+spec:
+  package: xpkg.upbound.io/upbound/function-go-templating:v0.11.5
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: upbound-function-auto-ready
+spec:
+  package: xpkg.upbound.io/upbound/function-auto-ready:v0.6.2
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: swengin-function-objectstorage-helpers
+spec:
+  package: ghcr.io/swengin/function-objectstorage-helpers:v0.1.0

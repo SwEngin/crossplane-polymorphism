@@ -1,0 +1,97 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xobjectstorages.swengin.io
+spec:
+  group: swengin.io
+  names:
+    kind: XObjectStorage
+    plural: xobjectstorages
+  scope: Namespaced
+  defaultCompositionRef:
+    name: objectstorage-ceph
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: Desired state of the ObjectStorage resource.
+              properties:
+                # ---- Common fields ----
+                class:
+                  type: string
+                  enum: [standard, premium]
+                  default: standard
+                versioning:
+                  type: boolean
+                  default: false
+                retentionDays:
+                  type: integer
+                  minimum: 0
+                  default: 0
+                # ---- Azure-specific fields ----
+                azure:
+                  type: object
+                  properties:
+                    region:
+                      type: string
+                      default: germanywestcentral
+                    resourceGroupName:
+                      type: string
+                    createResourceGroup:
+                      type: boolean
+                      default: true
+                    s3Proxy:
+                      type: boolean
+                      default: true
+                    accessMode:
+                      type: string
+                      enum: [private, public-read]
+                      default: private
+                  # createResourceGroup: false is only valid when resourceGroupName is provided.
+                  oneOf:
+                    - properties:
+                        createResourceGroup:
+                          enum: [true]
+                    - required: [resourceGroupName]
+                      properties:
+                        createResourceGroup:
+                          enum: [false]
+                # ---- Ceph-specific fields ----
+                ceph:
+                  type: object
+                  properties:
+                    namespace:
+                      type: string
+                      default: rook-ceph
+                    objectStoreName:
+                      type: string
+                # ---- Crossplane metadata ----
+                crossplane:
+                  type: object
+                  properties:
+                    compositionRef:
+                      type: object
+            status:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                bucketName:
+                  type: string
+                credentialsSecretRef:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    namespace: {type: string}
+                protocol:
+                  type: string
+                  enum: [s3, azure-blob]
+                platformConfig:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true

@@ -1,0 +1,147 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: objectstorage-ceph
+  labels:
+    provider: ceph
+spec:
+  compositeTypeRef:
+    apiVersion: swengin.io/v1alpha1
+    kind: XObjectStorage
+  mode: Pipeline
+  pipeline:
+
+    # ------------------------------------------------------------------
+    # Step 1: Helpers — compute derived values once, share via context.
+    # ------------------------------------------------------------------
+    - step: helpers
+      functionRef:
+        name: swengin-function-objectstorage-helpers
+
+    # ------------------------------------------------------------------
+    # Step 2: ObjectStore — resources output directly (no k8s provider).
+    # Gated on cephObjectStoreReady (CephObjectStore phase=Ready).
+    # ------------------------------------------------------------------
+    - step: objectstore
+      functionRef:
+        name: upbound-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec :=  $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace | default "default" }}
+            {{- $h := index .context "swengin.io/helpers" }}
+            {{- $storeReady := $h.cephObjectStoreReady }}
+            {{- $storageClass := $spec.class | default "standard" }}
+            {{- if $storeReady }}
+            ---
+            # ObjectBucketClaim — namespace-scoped, output directly.
+            # OBC Secret keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+            # OBC ConfigMap keys: BUCKET_HOST, BUCKET_PORT, BUCKET_NAME
+            apiVersion: objectbucket.io/v1alpha1
+            kind: ObjectBucketClaim
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: ceph-obc
+              name: {{ $name }}
+              namespace: {{ $ns }}
+            spec:
+              bucketName: {{ $name }}
+              storageClassName: {{ $storageClass }}
+            {{- end }}{{/* end storeReady */}}
+
+    # ------------------------------------------------------------------
+    # Step 3: Bucket config + Status — single Job configures versioning
+    # and/or retention once the OBC is Bound.
+    # ------------------------------------------------------------------
+    - step: bucket-config-and-status
+      functionRef:
+        name: upbound-function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace | default "default" }}
+            {{- $versioning := $xr.spec.versioning | default false }}
+            {{- $retentionDays := $xr.spec.retentionDays | default 0 }}
+            {{- $h := index .context "swengin.io/helpers" }}
+            {{- $obcReady := $h.obcReady }}
+            {{- $rgwEndpoint := $h.rgwEndpoint }}
+
+            {{- if and $obcReady (or $versioning (gt (int $retentionDays) 0)) }}
+            ---
+            # Bucket config Job — namespace-scoped, output directly.
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: ceph-bucket-config
+              name: bucket-config-{{ $name }}
+              namespace: {{ $ns }}
+            spec:
+              ttlSecondsAfterFinished: 300
+              backoffLimit: 3
+              template:
+                spec:
+                  restartPolicy: OnFailure
+                  containers:
+                    - name: aws-cli
+                      image: public.ecr.aws/aws-cli/aws-cli:2.24.19
+                      command:
+                        - /bin/sh
+                        - -c
+                        - |
+                          ENDPOINT="http://${BUCKET_HOST}:${BUCKET_PORT}"
+                          {{- if $versioning }}
+                          echo "Enabling versioning on ${BUCKET_NAME}..."
+                          aws s3api put-bucket-versioning \
+                            --bucket "${BUCKET_NAME}" \
+                            --versioning-configuration Status=Enabled \
+                            --endpoint-url "${ENDPOINT}"
+                          {{- end }}
+                          {{- if gt (int $retentionDays) 0 }}
+                          echo "Setting lifecycle retention to {{ $retentionDays }} days on ${BUCKET_NAME}..."
+                          aws s3api put-bucket-lifecycle-configuration \
+                            --bucket "${BUCKET_NAME}" \
+                            --lifecycle-configuration '{"Rules":[{"ID":"expire","Status":"Enabled","Expiration":{"Days":{{ $retentionDays }}}}]}' \
+                            --endpoint-url "${ENDPOINT}"
+                          {{- end }}
+                          echo "Bucket configuration complete."
+                      env:
+                        - name: AWS_EC2_METADATA_DISABLED
+                          value: "true"
+                      envFrom:
+                        - secretRef:
+                            name: {{ $name }}
+                        - configMapRef:
+                            name: {{ $name }}
+            {{- end }}{{/* end bucket config */}}
+            ---
+            # Composite Resource — set status fields
+            apiVersion: swengin.io/v1alpha1
+            kind: XObjectStorage
+            metadata:
+              name: {{ $name }}
+            status:
+              bucketName: {{ $name }}
+              endpoint: {{ $rgwEndpoint }}
+              protocol: s3
+              credentialsSecretRef:
+                name: {{ $name }}
+                namespace: {{ $ns }}
+
+    # ------------------------------------------------------------------
+    # Step 4: Readiness
+    # ------------------------------------------------------------------
+    - step: readiness
+      functionRef:
+        name: upbound-function-auto-ready

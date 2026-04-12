@@ -1,0 +1,11 @@
+name: Install Crossplane CLI
+description: Install the Crossplane CLI and move it onto PATH
+
+runs:
+  using: composite
+  steps:
+    - name: Install Crossplane CLI
+      shell: bash
+      run: |
+        curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+        sudo mv crossplane /usr/local/bin/crossplane

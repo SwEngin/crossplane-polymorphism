@@ -1,0 +1,19 @@
+# Test XR: Azure Blob Storage with S3Proxy enabled
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: test-azure-s3proxy
+  namespace: team-a
+  uid: "test-uid-azure-001"
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: azure
+  class: standard
+  versioning: true
+  retentionDays: 30
+  accessMode: private
+  azure:
+    region: canadacentral
+    resourceGroupName: my-platform-rg
+    s3Proxy: true

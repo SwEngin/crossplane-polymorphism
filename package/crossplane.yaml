@@ -1,0 +1,22 @@
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Configuration
+metadata:
+  name: configuration-objectstorage
+  annotations:
+    meta.crossplane.io/maintainer: swengin.io
+    meta.crossplane.io/source: https://github.com/swengin/crossplane-objectstorage
+    meta.crossplane.io/description: |
+      Polymorphic ObjectStorage - one XRD contract, two implementations
+      (Azure Blob Storage with optional S3Proxy, on-prem Ceph RGW).
+spec:
+  crossplane:
+    version: ">=v2.0.0"
+  dependsOn:
+    - provider: xpkg.upbound.io/upbound/provider-azure-storage
+      version: ">=v2.5.0"
+    - function: xpkg.upbound.io/upbound/function-go-templating
+      version: ">=v0.11.5"
+    - function: xpkg.upbound.io/upbound/function-auto-ready
+      version: ">=v0.6.2"
+    - function: ghcr.io/swengin/function-objectstorage-helpers
+      version: ">=v0.1.0"

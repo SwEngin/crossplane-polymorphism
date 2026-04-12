@@ -1,0 +1,13 @@
+# Test XR: Ceph with default store name (derived from XR name)
+apiVersion: swengin.io/v1alpha1
+kind: XObjectStorage
+metadata:
+  name: test-ceph-deploy
+  namespace: team-a
+  uid: "test-uid-ceph-001"
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: ceph
+  class: premium
+  versioning: true

@@ -1,0 +1,75 @@
+# Demo: Verify Ceph ObjectStorage end-to-end
+#
+# Prerequisite: xobjectstorage-ceph-versioning.yaml applied and XR is Ready.
+#
+# This Job:
+#   1. Reads AWS credentials from the OBC-created Secret
+#   2. Reads bucket coordinates from the OBC-created ConfigMap
+#   3. Uploads a test object directly to Ceph RGW
+#   4. Downloads it back and verifies content
+#   5. Optionally lists object versions (proves versioning is active)
+#   6. Deletes the test object
+#
+# Run:
+#   kubectl apply -f examples/xobjectstorage-ceph-versioning.yaml
+#   kubectl wait xobjectstorage/team-data-ceph-fresh --for=condition=Ready --timeout=5m -n team-b
+#   kubectl apply -f examples/demo-app-ceph.yaml
+#   kubectl logs -n team-b job/demo-ceph-roundtrip --follow
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-ceph-roundtrip
+  namespace: team-b
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: aws-cli
+          image: public.ecr.aws/aws-cli/aws-cli:2.24.19
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              ENDPOINT="http://${BUCKET_HOST}:${BUCKET_PORT}"
+              echo "=== Ceph RGW round-trip demo ==="
+              echo "Endpoint : $ENDPOINT"
+              echo "Bucket   : $BUCKET_NAME"
+              echo ""
+
+              echo "hello from crossplane demo" > /tmp/test.txt
+
+              echo "[1/4] Uploading test object..."
+              aws s3 cp /tmp/test.txt s3://${BUCKET_NAME}/demo/test.txt \
+                --endpoint-url "${ENDPOINT}"
+
+              echo "[2/4] Downloading and verifying..."
+              aws s3 cp s3://${BUCKET_NAME}/demo/test.txt /tmp/downloaded.txt \
+                --endpoint-url "${ENDPOINT}"
+              diff /tmp/test.txt /tmp/downloaded.txt
+
+              echo "[3/4] Listing object versions (versioning must be enabled)..."
+              aws s3api list-object-versions \
+                --bucket "${BUCKET_NAME}" \
+                --prefix demo/test.txt \
+                --endpoint-url "${ENDPOINT}"
+
+              echo "[4/4] Cleaning up..."
+              aws s3 rm s3://${BUCKET_NAME}/demo/test.txt \
+                --endpoint-url "${ENDPOINT}"
+
+              echo ""
+              echo "SUCCESS — Ceph ObjectStorage is working end-to-end"
+          env:
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+          envFrom:
+            # OBC Secret: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+            - secretRef:
+                name: team-data-ceph-fresh
+            # OBC ConfigMap: BUCKET_HOST, BUCKET_PORT, BUCKET_NAME
+            - configMapRef:
+                name: team-data-ceph-fresh

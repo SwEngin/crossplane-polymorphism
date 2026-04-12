@@ -1,0 +1,39 @@
+# Azure ProviderConfig
+#
+# This references a Kubernetes Secret containing Azure credentials.
+# Create the secret first:
+#
+#   kubectl create secret generic azure-creds \
+#     -n crossplane-system \
+#     --from-file=credentials=./azure-credentials.json
+#
+# The credentials JSON should contain a service principal:
+# {
+#   "clientId": "...",
+#   "clientSecret": "...",
+#   "subscriptionId": "...",
+#   "tenantId": "..."
+# }
+apiVersion: azure.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: azure-provider
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      name: azure-creds
+      namespace: crossplane-system
+      key: credentials
+---
+apiVersion: azure.m.upbound.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: azure-provider
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      name: azure-creds
+      namespace: crossplane-system
+      key: credentials
