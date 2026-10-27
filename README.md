@@ -1,4 +1,8 @@
+
+
 # Crossplane Storage Polymorphism
+
+test 1 branche
 
 Platform-level **ObjectStorage** abstraction powered by [Crossplane](https://www.crossplane.io/).  
 One XRD contract, two implementations — consumers pick a backend with a single label selector.
