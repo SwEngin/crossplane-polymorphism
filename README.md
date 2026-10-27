@@ -7,7 +7,7 @@ One XRD contract, two implementations — consumers pick a backend with a single
 |---------|-------------|----------|----------|
 | **Azure Blob Storage** | `objectstorage-azure` | `s3` (via S3Proxy) | Cloud workloads on Azure |
 | **Ceph / Rook (on-prem)** | `objectstorage-ceph` | `s3` (native RGW) | On-prem / private cloud |
-
+//test
 ---
 
 ## Architecture
