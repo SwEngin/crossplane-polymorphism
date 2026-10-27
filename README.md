@@ -278,3 +278,9 @@ pattern is used: declare the claim, Rook provisions the bucket and creates crede
 2. Composition waits for CephObjectStore phase=Ready, then creates an ObjectBucketClaim
 3. Rook bucket provisioner creates bucket + Secret/ConfigMap with S3 credentials
 4. Optional versioning/retention Job runs once OBC is Bound
+
+
+
+### Anpassungen im Training durch Nicky
+Hier sind meine wichtigen Anpassungen zu finden...
+Die neuen Anpassungen sind nur in der Readme.
